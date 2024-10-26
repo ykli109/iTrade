@@ -12,7 +12,7 @@ from data.cn_stock_selection import TABLE_CN_STOCK_SELECTION
 from data.utils import get_field_type_name
 
 # 初始化日志
-logger = initLog(log_filename='database_fetch.log')
+logger = initLog(log_filename='data_fetch.log')
 
 def stock_selection(
     markets: Optional[List[str]] = None,
@@ -49,7 +49,7 @@ def stock_selection(
     
     # 构建过滤条件
     markets_quoted = ','.join(f'\"{market}\"' for market in markets)
-    filter_conditions = f'(MARKET+in+({markets_quoted}))(NEW_PRICE>{min_price})'
+    filter_conditions = f'(MARKET+in+({markets_quoted}))(NEW_PRICE>{min_price}))'
     if extra_filters:
         filter_conditions += extra_filters
     
@@ -61,7 +61,7 @@ def stock_selection(
         "p": page,
         "ps": page_size,
         "source": source,
-        "client": client
+        "client": client,
     }
     logger.info(f"请求参数: {params}")
 
