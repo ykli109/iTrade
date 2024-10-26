@@ -10,9 +10,68 @@ from typing import List, Optional
 from utils.log import initLog
 from data.cn_stock_selection import TABLE_CN_STOCK_SELECTION
 from data.utils import get_field_type_name
+from database.utils import insert_db_from_df
+from sqlalchemy.exc import SQLAlchemyError
+import time
+import functools
 
 # 初始化日志
 logger = initLog(log_filename='data_fetch.log')
+
+def retry(max_retries=3, delay=5, exceptions=(SQLAlchemyError,)):
+    """
+    装饰器，用于在发生指定异常时重试函数。
+
+    参数:
+        max_retries (int): 最大重试次数。
+        delay (int): 每次重试的延迟时间（秒）。
+        exceptions (tuple): 需要触发重试的异常类型。
+
+    返回:
+        function: 被装饰的函数。
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            while retries < max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    retries += 1
+                    logger.error(f"函数 {func.__name__} 第 {retries} 次重试因错误: {e}")
+                    if retries < max_retries:
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"函数 {func.__name__} 达到最大重试次数，操作失败。")
+                        raise
+        return wrapper
+    return decorator
+
+@retry(max_retries=3, delay=5, exceptions=(SQLAlchemyError,))
+def write_to_database(df: pd.DataFrame, table_name: str = 'cn_stock_selection', db_name: str = 'default'):
+    """
+    将DataFrame数据写入指定的数据库表中。
+
+    参数:
+        df (pd.DataFrame): 要写入的数据。
+        table_name (str): 目标数据库表名。
+        db_name (str): 数据库配置名称，默认为 'default'。
+    """
+    if df.empty:
+        logger.info("DataFrame为空，跳过写入数据库。")
+        return
+
+    try:
+            # 提取 columns 中的 map 字段和对应的 key 值
+        map_to_key = {v['map']: k for k, v in TABLE_CN_STOCK_SELECTION['columns'].items()}
+        df.rename(columns=map_to_key, inplace=True)
+# 将数据写入数据库，使用已有的方法
+        insert_db_from_df (df, table_name=table_name, db_name='default')  # 调用已有的方法
+        logger.info(f"成功将数据写入数据库表 '{table_name}'。")
+    except SQLAlchemyError as e:
+        logger.error(f"将数据写入数据库时发生错误: {e}")
+        raise
 
 def stock_selection(
     markets: Optional[List[str]] = None,
@@ -49,7 +108,7 @@ def stock_selection(
     
     # 构建过滤条件
     markets_quoted = ','.join(f'\"{market}\"' for market in markets)
-    filter_conditions = f'(MARKET+in+({markets_quoted}))(NEW_PRICE>{min_price}))'
+    filter_conditions = f'(MARKET+in+({markets_quoted}))(NEW_PRICE>{min_price})'
     if extra_filters:
         filter_conditions += extra_filters
     
@@ -97,8 +156,13 @@ def stock_selection(
 
     return temp_df
 
-# 测试获取10条数据
+# 获取综合选股数据并写入数据库
 if __name__ == "__main__":
-    # 获取最近一个交易日的10条数据
-    df = stock_selection(page_size=10)
-    logger.info(df)
+    try:
+        # 获取最近一个交易日的10条数据
+        df = stock_selection()
+        
+        # 将数据写入数据库
+        write_to_database(df, table_name='cn_stock_selection')
+    except Exception as e:
+        logger.error(f"整个流程发生错误: {e}")

@@ -22,4 +22,6 @@ venv\Scripts\activate
 source venv/bin/activate
 # 然后安装依赖包
 pip install -r requirements.txt
+# 固化依赖
+pip freeze > requirements.txt
 ```
