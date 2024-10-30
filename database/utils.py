@@ -9,13 +9,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from database.config import DB_CONFIGS  # 假设我们有多个数据库配置
 from utils.log import initLog
 import pandas as pd
+from datetime import datetime
 
 # 初始化日志
 logger = initLog(log_filename='database_utils.log')
 
 # 全局引擎字典
 _engines = {}
-
 def get_engine(db_name='default'):
     """
     创建并返回SQLAlchemy引擎（多数据库支持）。
@@ -43,7 +43,7 @@ def get_engine(db_name='default'):
 # 插入DataFrame到数据库
 def insert_db_from_df(data, table_name, db_name='default'):
     """
-    将DataFrame数据插入或更新到指定的数据库表中。
+    将DataFrame数据插入或更新到指定的数据库表中，并添加updated_at字段。
     :param data: 要插入的DataFrame
     :param table_name: 目标表名
     :param db_name: 数据库名称
@@ -52,112 +52,38 @@ def insert_db_from_df(data, table_name, db_name='default'):
     if engine is None:
         logger.error(f"无法获取数据库引擎 {db_name}，插入操作中止。")
         return
-
-    # 处理NaN值
-    data = data.fillna(0)
-
-    try:
-        with engine.connect() as connection:
-            # 批量查询现有的 date 和 code
-            records = [(row['date'], row['code']) for _, row in data.iterrows()]
-
-            # 使用 SQLAlchemy 的适当方式传递参数
-            existing_records = connection.execute(
-                text(f"SELECT date, code FROM {table_name} WHERE (date, code) IN :records"),
-                {"records": records}
-            ).fetchall()
-
-            # 将查询结果转换为集合
-            existing_ids_set = {(row[0], row[1]) for row in existing_records}
-
-            # 分离需要更新和插入的数据
-            updates = []
-            inserts = []
-            for _, row in data.iterrows():
-                if (row['date'], row['code']) in existing_ids_set:
-                    updates.append(row.to_dict())
-                else:
-                    inserts.append(row)
-
-            # 批量更新
-            if updates:
-                # 获取DataFrame的列名
-                columns = data.columns.tolist()
-                # 构建更新语句
-                update_stmt = f"""
-                    UPDATE {table_name} 
-                    SET {', '.join(f"{col} = :{col}" for col in columns if col not in ['date', 'code'])}
-                    WHERE date = :date AND code = :code
-                """
-                connection.execute(text(update_stmt), updates)
-                # 成功更新n条数据
-                logger.info(f"成功更新 {len(updates)} 条数据到表 `{table_name}` (数据库: {db_name})。")
-
-            # 批量插入
-            if inserts:
-                pd.DataFrame(inserts).to_sql(name=table_name, con=engine, if_exists='append', index=False, chunksize=2000)
-                # 成功插入n条数据
-                logger.info(f"成功插入 {len(inserts)} 条数据到表 `{table_name}` (数据库: {db_name})。")
-
-    except SQLAlchemyError as e:
-        logger.error(f"在插入或更新数据到表 `{table_name}` (数据库: {db_name}) 时发生错误: {str(e)}")
-
-# 执行任意SQL语句
-def execute_sql(sql, params=None, db_name='default'):
-    """
-    执行任意SQL语句。
-    :param sql: 要执行的SQL语句
-    :param params: SQL语句中的参数
-    :param db_name: 数据库名称
-    """
-    engine = get_engine(db_name)
-    if engine is None:
-        logger.error(f"无法获取数据库引擎 {db_name}，SQL执行操作中止。")
+    
+    # 检查DataFrame是否为空
+    if data.empty:
+        logger.warning("DataFrame为空，无法进行插入操作。")
         return
 
     try:
-        with engine.connect() as conn:
-            conn.execute(text(sql), params or {})
-        logger.info(f"成功执行SQL语句 (数据库: {db_name}): {sql}")
+        with engine.connect() as connection:
+            with connection.begin():
+                # 检查表是否存在
+                inspector = inspect(engine)
+                if not inspector.has_table(table_name):
+                    # 如果表不存在,直接创建表并插入数据
+                    data.to_sql(table_name, connection, index=False)
+                    logger.info(f"创建表 {table_name} 并插入数据成功")
+                    return
+
+                # 根据uniq_id判断，当前表中是否存在与data中重复的数据，如果存在，则批量删除数据
+                # 获取data中的所有uniq_id
+                if 'uniq_id' in data.columns:
+                    uniq_ids = tuple(data['uniq_id'].tolist())
+                    if len(uniq_ids) == 1:
+                        # 如果只有一个值,需要特殊处理语法
+                        delete_sql = f"DELETE FROM {table_name} WHERE uniq_id = '{uniq_ids[0]}'"
+                    else:
+                        delete_sql = f"DELETE FROM {table_name} WHERE uniq_id IN {uniq_ids}"
+                    connection.execute(text(delete_sql))
+                    logger.info(f"删除表 {table_name} 中的重复数据成功")
+
+                # 插入新数据
+                data.to_sql(table_name, connection, if_exists='append', index=False)
+                logger.info(f"向表 {table_name} 插入新数据成功")
+
     except SQLAlchemyError as e:
-        logger.error(f"执行SQL语句失败 (数据库: {db_name}): {sql}，错误: {e}")
-
-# 查询数据
-def execute_sql_fetch(sql, params=None, db_name='default'):
-    """
-    执行查询SQL并返回结果。
-    :param sql: 查询SQL语句
-    :param params: SQL语句中的参数
-    :param db_name: 数据库名称
-    :return: 查询结果
-    """
-    engine = get_engine(db_name)
-    if engine is None:
-        logger.error(f"无法获取数据库引擎 {db_name}，查询操作中止。")
-        return None
-
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text(sql), params or {})
-            return result.fetchall()
-    except SQLAlchemyError as e:
-        logger.error(f"执行查询SQL失败 (数据库: {db_name}): {sql}，错误: {e}")
-        return None
-
-# 检查表是否存在
-def check_table_exists(table_name, db_name='default'):
-    """
-    检查指定的表是否存在于数据库中。
-    :param table_name: 表名
-    :param db_name: 数据库名称
-    :return: 存在返回True，否则返回False
-    """
-    engine = get_engine(db_name)
-    if engine is None:
-        logger.error(f"无法获取数据库引擎 {db_name}，检查表存在性操作中止。")
-        return False
-
-    inspector = inspect(engine)
-    exists = inspector.has_table(table_name)
-    logger.info(f"表 `{table_name}` 在数据库 {db_name} 中存在: {exists}")
-    return exists
+        logger.error(f"在插入或更新数据到表 `{table_name}` (数据库: {db_name}) 时发生错误: {str(e)}")

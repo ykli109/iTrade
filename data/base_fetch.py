@@ -1,4 +1,5 @@
 # 添加项目根目录到Python路径
+import datetime
 import os
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -8,7 +9,7 @@ import pandas as pd
 import requests
 from typing import List, Optional
 from utils.log import initLog
-from data.cn_stock_selection import TABLE_CN_STOCK_SELECTION
+from data.base import TABLE_BASE
 from data.utils import get_field_type_name
 from database.utils import insert_db_from_df
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,7 +50,7 @@ def retry(max_retries=3, delay=5, exceptions=(SQLAlchemyError,)):
     return decorator
 
 @retry(max_retries=3, delay=5, exceptions=(SQLAlchemyError,))
-def write_to_database(df: pd.DataFrame, table_name: str = 'cn_stock_selection', db_name: str = 'default'):
+def write_to_database(df: pd.DataFrame, table_name: str = 'base', db_name: str = 'default'):
     """
     将DataFrame数据写入指定的数据库表中。
 
@@ -63,11 +64,14 @@ def write_to_database(df: pd.DataFrame, table_name: str = 'cn_stock_selection', 
         return
 
     try:
-            # 提取 columns 中的 map 字段和对应的 key 值
-        map_to_key = {v['map']: k for k, v in TABLE_CN_STOCK_SELECTION['columns'].items()}
+        # 提取 columns 中的 map 字段和对应的 key 值
+        map_to_key = {v['map']: k for k, v in TABLE_BASE['columns'].items()}
         df.rename(columns=map_to_key, inplace=True)
-# 将数据写入数据库，使用已有的方法
-        insert_db_from_df (df, table_name=table_name, db_name='default')  # 调用已有的方法
+        # 根据 TABLE_BASE['columns'] 的键排序
+        new_order = list(TABLE_BASE['columns'].keys())
+        df = df.reindex(columns=new_order)
+        # 将数据写入数据库，使用已有的方法
+        insert_db_from_df(data=df, table_name=table_name, db_name='default')  # 调用已有的方法
         logger.info(f"成功将数据写入数据库表 '{table_name}'。")
     except SQLAlchemyError as e:
         logger.error(f"将数据写入数据库时发生错误: {e}")
@@ -96,7 +100,7 @@ def stock_selection(
     :return: 选股结果的DataFrame
     :rtype: pandas.DataFrame
     """
-    cols = TABLE_CN_STOCK_SELECTION['columns']
+    cols = TABLE_BASE['columns']
     
     # 构建 'sty' 字符串，包含所有需要的字段
     sty_fields = [col_info['map'] for col_name, col_info in cols.items()]
@@ -129,6 +133,14 @@ def stock_selection(
         response.raise_for_status()
         data_json = response.json()
         data = data_json.get("result", {}).get("data", [])
+        # 处理每个数据记录
+        # 获取当前时间
+        current_time = datetime.datetime.now()
+        for item in data:
+            # 添加UPDATE_TIME字段
+            item['UPDATE_TIME'] = current_time
+            # 生成UNIQ_ID字段 (MAX_TRADE_DATE + SECURITY_CODE)
+            item['UNIQ_ID'] = f"{item['MAX_TRADE_DATE']}{item['SECURITY_CODE']}"
         if not data:
             return pd.DataFrame()
         temp_df = pd.DataFrame(data)
@@ -160,9 +172,9 @@ def stock_selection(
 if __name__ == "__main__":
     try:
         # 获取最近一个交易日的10条数据
-        df = stock_selection()
-        
+        df = stock_selection(page_size=1)
+        # df = stock_selection()
         # 将数据写入数据库
-        write_to_database(df, table_name='cn_stock_selection')
+        write_to_database(df, table_name='base_test')
     except Exception as e:
         logger.error(f"整个流程发生错误: {e}")

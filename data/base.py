@@ -1,15 +1,21 @@
 from sqlalchemy import DATE, NVARCHAR, FLOAT, BIGINT, SmallInteger
 from sqlalchemy.dialects.mysql import BIT
 
-TABLE_CN_STOCK_SELECTION = {
-    'name': 'cn_stock_selection',
-    'cn': '综合选股',
+TABLE_BASE = {
+    'name': 'base',
+    'cn': '基础数据',
     'columns': {
         'date': {
             'type': DATE,
             'cn': '日期',
             'size': 0,
             'map': 'MAX_TRADE_DATE'
+        },
+        'update_time': {
+            'type': DATE,
+            'cn': '更新时间',
+            'size': 0,
+            'map': 'UPDATE_TIME'
         },
         'code': {
             'type': NVARCHAR(length=6),
@@ -1240,6 +1246,12 @@ TABLE_CN_STOCK_SELECTION = {
             'cn': '全代码',
             'size': 0,
             'map': 'SECUCODE'
-        }
+        },
+        'uniq_id': {
+            'type': NVARCHAR(length=20),
+            'cn': 'UID',
+            'size': 0,
+            'map': 'UNIQ_ID'
+        },
     }
 }
