@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from sqlalchemy import DATE, NVARCHAR, FLOAT, BIGINT, SmallInteger
 from sqlalchemy.dialects.mysql import BIT
 

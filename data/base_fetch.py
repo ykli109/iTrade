@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 # 添加项目根目录到Python路径
 import datetime
 import os
@@ -171,10 +173,10 @@ def stock_selection(
 # 获取综合选股数据并写入数据库
 if __name__ == "__main__":
     try:
-        # 获取最近一个交易日的10条数据
-        df = stock_selection(page_size=1)
+        # 获取最近一个交易日的数据
+        df = stock_selection()
         # df = stock_selection()
         # 将数据写入数据库
-        write_to_database(df, table_name='base_test')
+        write_to_database(df, table_name='base')
     except Exception as e:
         logger.error(f"整个流程发生错误: {e}")
