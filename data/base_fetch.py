@@ -82,8 +82,7 @@ def write_to_database(df: pd.DataFrame, table_name: str = 'base', db_name: str =
 def stock_selection(
     markets: Optional[List[str]] = None,
     min_price: float = 0.0,
-    page: int = 1,
-    page_size: int = 10000,
+    page_size: int = 600,  # 修改默认每页数量为300
     source: str = "SELECT_SECURITIES",
     client: str = "WEB",
     extra_filters: Optional[str] = None
@@ -94,8 +93,7 @@ def stock_selection(
     
     :param markets: 市场类别列表，例如 ["上交所主板", "深交所主板"]。默认为 ["上交所主板", "深交所主板", "深交所创业板"]
     :param min_price: 最低股价筛选条件。默认为 0.0
-    :param page: 请求的页码。默认为 1
-    :param page_size: 每页返回的数据量。默认为 10000
+    :param page_size: 每页返回的数据量。默认为 300
     :param source: 数据来源。默认为 "SELECT_SECURITIES"
     :param client: 客户端类型。默认为 "WEB"
     :param extra_filters: 额外的过滤条件字符串。默认为 None
@@ -120,38 +118,61 @@ def stock_selection(
     
     # 请求URL和参数
     url = "https://data.eastmoney.com/dataapi/xuangu/list"
-    params = {
-        "sty": sty,
-        "filter": filter_conditions,
-        "p": page,
-        "ps": page_size,
-        "source": source,
-        "client": client,
-    }
-    logger.info(f"请求参数: {params}")
 
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        data_json = response.json()
-        data = data_json.get("result", {}).get("data", [])
-        # 处理每个数据记录
-        # 获取当前时间
-        current_time = datetime.datetime.now()
-        for item in data:
-            # 添加UPDATE_TIME字段
-            item['UPDATE_TIME'] = current_time
-            # 生成UNIQ_ID字段 (MAX_TRADE_DATE + SECURITY_CODE)
-            item['UNIQ_ID'] = f"{item['MAX_TRADE_DATE']}{item['SECURITY_CODE']}"
-        if not data:
-            return pd.DataFrame()
-        temp_df = pd.DataFrame(data)
-    except requests.RequestException as e:
-        logger.error(f"HTTP请求失败: {e}")
-        return pd.DataFrame()
-    except ValueError as e:
-        logger.error(f"解析JSON失败: {e}")
-        return pd.DataFrame()
+    all_data = []
+    current_page = 1
+    exception_count = 0
+    while True:
+        params = {
+            "sty": sty,
+            "filter": filter_conditions,
+            "p": current_page,
+            "ps": page_size,
+            "source": source,
+            "client": client,
+        }
+        logger.info(f"正在请求第 {current_page} 页")
+        print(f"正在请求第 {current_page} 页")
+        # logger.info(f"请求参数: {params}")
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data_json = response.json()
+            data = data_json.get("result", {}).get("data", [])
+
+            print(f"数据条数 {len(data)}")
+
+            if (not data):
+                break
+            # 处理当前页的数据
+            current_time = datetime.datetime.now()
+            for item in data:
+                item['UPDATE_TIME'] = current_time
+                item['UNIQ_ID'] = f"{item['MAX_TRADE_DATE']}{item['SECURITY_CODE']}"
+
+            all_data.extend(data)
+            # 检查是否有下一页
+            has_next = data_json.get("result", {}).get("nextpage", False)
+            if not has_next:
+                break
+            current_page += 1
+        except requests.RequestException as e:
+            logger.error(f"HTTP请求失败: {e}")
+            exception_count += 1
+            if exception_count > 20:
+                break
+            continue
+        except ValueError as e:
+            logger.error(f"解析JSON失败: {e}")
+            exception_count += 1
+            if exception_count > 20:
+                break
+            continue
+    if not all_data:
+        logger.info("没有找到符合条件的数据")
+        return
+    
+    temp_df = pd.DataFrame(all_data)
 
     # 处理 'CONCEPT' 和 'STYLE' 列
     for field in ['CONCEPT', 'STYLE']:
